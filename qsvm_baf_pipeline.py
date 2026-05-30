@@ -219,9 +219,21 @@ print("=" * 70)
 from qiskit.circuit.library import ZZFeatureMap
 from qiskit_machine_learning.kernels import FidelityQuantumKernel
 from qiskit_machine_learning.state_fidelities import ComputeUncompute
-from qiskit.primitives import StatevectorSampler   # Qiskit 1.x
-from qiskit_aer import AerSimulator
-from qiskit_aer.primitives import Sampler as AerSampler
+
+# ── Selezione automatica della primitiva Sampler compatibile ─────────────────
+# qiskit-machine-learning richiede il Sampler V1 (interfaccia legacy).
+# Proviamo in ordine:
+#   1. qiskit_aer.primitives.Sampler  → più veloce, usa AerSimulator
+#   2. qiskit.primitives.Sampler      → fallback statevector puro (più lento)
+try:
+    from qiskit_aer.primitives import Sampler as AerSampler
+    sampler = AerSampler()
+    sampler_name = "AerSampler (qiskit-aer)"
+except Exception:
+    from qiskit.primitives import Sampler as QiskitSampler
+    sampler = QiskitSampler()
+    sampler_name = "StatevectorSampler (qiskit fallback)"
+print(f"[SAMPLER] Usando: {sampler_name}")
 
 # 8a. Definizione della ZZFeatureMap
 # - feature_dimension = 4  → 4 qubit (= numero di PC)
@@ -235,20 +247,15 @@ feature_map = ZZFeatureMap(
 print("ZZFeatureMap creata:")
 print(feature_map.decompose())
 
-# 8b. Primitiva di campionamento su AerSimulator (simulatore locale)
-# AerSampler esegue il circuito "compute-uncompute" e restituisce
-# la probabilità di misurare |00...0⟩, che è esattamente K(xi, xj)
-aer_sampler = AerSampler()
-
-# 8c. FidelityQuantumKernel
+# 8b. FidelityQuantumKernel
 # Il kernel quantistico è definito come:
 #   K(xi, xj) = |<Φ(xi)|Φ(xj)>|²
 # dove |Φ(x)> = feature_map(x)|0...0>
-# FidelityQuantumKernel usa internamente ComputeUncompute:
-#   1. Prepara |Φ(xi)>
-#   2. Applica feature_map†(xj) (inverso)
-#   3. Misura P(|00...0>) = fidelity = K(xi, xj)
-fidelity = ComputeUncompute(sampler=aer_sampler)
+# ComputeUncompute implementa il circuito "inversion test":
+#   1. Prepara |Φ(xi)>           applicando feature_map(xi) a |0...0>
+#   2. Applica feature_map†(xj)  (circuito inverso con parametri xj)
+#   3. Misura P(|0000>) = fidelity = K(xi, xj)
+fidelity = ComputeUncompute(sampler=sampler)
 qkernel = FidelityQuantumKernel(
     feature_map=feature_map,
     fidelity=fidelity
