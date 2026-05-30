@@ -224,8 +224,8 @@ import itertools
 # ── 8a. ZZFeatureMap ─────────────────────────────────────────────────────────
 feature_map = ZZFeatureMap(
     feature_dimension=N_QUBITS,
-    reps=2,
-    entanglement="linear"
+    reps=1, # Con reps=2 il circuito è molto profondo → i punti diventano troppo ortogonali (kernel ~0 ovunque). Con reps=1 il kernel è meno "espressivo" ma meno soggetto a concentration, e con pochi qubit spesso funziona meglio.
+    entanglement="full" # L'entanglement full connette tutti i qubit tra loro (non solo adiacenti), creando correlazioni più ricche tra le 4 feature. Con soli 4 qubit il costo computazionale è accettabile.
 )
 print("ZZFeatureMap creata:")
 print(feature_map.decompose())
