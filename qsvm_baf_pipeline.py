@@ -152,7 +152,7 @@ print("\n" + "=" * 70)
 print("BLOCCO 5 — BILANCIAMENTO CLASSI (100 per classe)")
 print("=" * 70)
 
-N_CLASS = 50  # per classe → 200 totali (limite simulatore QSVM)
+N_CLASS = 150  # per classe → 200 totali (limite simulatore QSVM)
 
 df_pca = pd.DataFrame(X_pca, columns=[f"PC{i+1}" for i in range(N_QUBITS)])
 df_pca["fraud_bool"] = y.values
