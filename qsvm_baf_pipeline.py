@@ -152,7 +152,7 @@ print("\n" + "=" * 70)
 print("BLOCCO 5 — BILANCIAMENTO CLASSI (100 per classe)")
 print("=" * 70)
 
-N_CLASS = 100  # per classe → 200 totali (limite simulatore QSVM)
+N_CLASS = 50  # per classe → 200 totali (limite simulatore QSVM)
 
 df_pca = pd.DataFrame(X_pca, columns=[f"PC{i+1}" for i in range(N_QUBITS)])
 df_pca["fraud_bool"] = y.values
@@ -217,28 +217,11 @@ print("BLOCCO 8 — QUANTUM KERNEL: ZZFeatureMap + FidelityQuantumKernel")
 print("=" * 70)
 
 from qiskit.circuit.library import ZZFeatureMap
-from qiskit_machine_learning.kernels import FidelityQuantumKernel
-from qiskit_machine_learning.state_fidelities import ComputeUncompute
+from qiskit import transpile
+from qiskit_aer import AerSimulator
+import itertools
 
-# ── Selezione automatica della primitiva Sampler compatibile ─────────────────
-# qiskit-machine-learning richiede il Sampler V1 (interfaccia legacy).
-# Proviamo in ordine:
-#   1. qiskit_aer.primitives.Sampler  → più veloce, usa AerSimulator
-#   2. qiskit.primitives.Sampler      → fallback statevector puro (più lento)
-try:
-    from qiskit_aer.primitives import Sampler as AerSampler
-    sampler = AerSampler()
-    sampler_name = "AerSampler (qiskit-aer)"
-except Exception:
-    from qiskit.primitives import Sampler as QiskitSampler
-    sampler = QiskitSampler()
-    sampler_name = "StatevectorSampler (qiskit fallback)"
-print(f"[SAMPLER] Usando: {sampler_name}")
-
-# 8a. Definizione della ZZFeatureMap
-# - feature_dimension = 4  → 4 qubit (= numero di PC)
-# - reps = 2               → due ripetizioni del layer di entanglement
-# - entanglement = 'linear' → CNOT tra qubit adiacenti (i, i+1)
+# ── 8a. ZZFeatureMap ─────────────────────────────────────────────────────────
 feature_map = ZZFeatureMap(
     feature_dimension=N_QUBITS,
     reps=2,
@@ -247,38 +230,97 @@ feature_map = ZZFeatureMap(
 print("ZZFeatureMap creata:")
 print(feature_map.decompose())
 
-# 8b. FidelityQuantumKernel
-# Il kernel quantistico è definito come:
-#   K(xi, xj) = |<Φ(xi)|Φ(xj)>|²
-# dove |Φ(x)> = feature_map(x)|0...0>
-# ComputeUncompute implementa il circuito "inversion test":
-#   1. Prepara |Φ(xi)>           applicando feature_map(xi) a |0...0>
-#   2. Applica feature_map†(xj)  (circuito inverso con parametri xj)
-#   3. Misura P(|0000>) = fidelity = K(xi, xj)
-fidelity = ComputeUncompute(sampler=sampler)
-qkernel = FidelityQuantumKernel(
-    feature_map=feature_map,
-    fidelity=fidelity
-)
+# ── 8b. Backend AerSimulator ─────────────────────────────────────────────────
+backend = AerSimulator(method="statevector")
+N_SHOTS = 8192   # shots per stima della fidelity
 
-# 8d. Calcolo matrice kernel
-# NOTA: O(N²) circuiti → per N=150 train = 11.325 esecuzioni
+def compute_kernel_entry(xi, xj, feature_map, backend, shots=N_SHOTS):
+    """
+    Calcola K(xi, xj) = P(|00...0>) tramite il circuito compute-uncompute.
+    Pipeline manuale:
+      1. Assegna xi alla feature_map  → U(xi)
+      2. Assegna xj alla feature_map  → U(xj), poi prende U†(xj)
+      3. Compone U(xi) · U†(xj) e aggiunge misure
+      4. Esegue su AerSimulator e legge P(000...0)
+    """
+    # Parametri della feature_map
+    params = feature_map.parameters
+
+    # Circuito per xi
+    circ_xi = feature_map.assign_parameters(dict(zip(params, xi)))
+
+    # Circuito inverso per xj
+    circ_xj_inv = feature_map.assign_parameters(dict(zip(params, xj))).inverse()
+
+    # Circuito compute-uncompute
+    from qiskit import QuantumCircuit
+    n = feature_map.num_qubits
+    qc = QuantumCircuit(n, n)
+    qc.compose(circ_xi,     inplace=True)
+    qc.compose(circ_xj_inv, inplace=True)
+    qc.measure(range(n), range(n))
+
+    # Transpile e run
+    qc_t = transpile(qc, backend, optimization_level=0)
+    job  = backend.run(qc_t, shots=shots)
+    counts = job.result().get_counts()
+
+    # P(|00...0>) = fidelity ≈ K(xi, xj)
+    zero_state = "0" * n
+    return counts.get(zero_state, 0) / shots
+
+
+def compute_kernel_matrix(X_a, X_b, feature_map, backend,
+                          shots=N_SHOTS, symmetric=False):
+    """
+    Calcola la matrice kernel K[i,j] = compute_kernel_entry(X_a[i], X_b[j]).
+    Se symmetric=True sfrutta K[i,j]=K[j,i] dimezzando le computazioni.
+    """
+    n_a, n_b = len(X_a), len(X_b)
+    K = np.zeros((n_a, n_b))
+
+    if symmetric:
+        # Solo triangolo superiore + diagonale
+        pairs = [(i, j) for i in range(n_a) for j in range(i, n_b)]
+        total = len(pairs)
+        for idx, (i, j) in enumerate(pairs):
+            if idx % 100 == 0:
+                print(f"  Progresso: {idx}/{total} coppie ({idx/total*100:.1f}%)",
+                      end="\r", flush=True)
+            val = compute_kernel_entry(X_a[i], X_b[j], feature_map, backend, shots)
+            K[i, j] = val
+            K[j, i] = val
+        print(f"  Completato: {total}/{total} coppie (100.0%)        ")
+    else:
+        total = n_a * n_b
+        for idx, (i, j) in enumerate(itertools.product(range(n_a), range(n_b))):
+            if idx % 100 == 0:
+                print(f"  Progresso: {idx}/{total} coppie ({idx/total*100:.1f}%)",
+                      end="\r", flush=True)
+            K[i, j] = compute_kernel_entry(X_a[i], X_b[j],
+                                            feature_map, backend, shots)
+        print(f"  Completato: {total}/{total} coppie (100.0%)        ")
+    return K
+
+
+# ── 8c. Calcolo K_train ───────────────────────────────────────────────────────
 print(f"\nCalcolo kernel matrix train ({X_train.shape[0]}x{X_train.shape[0]})...")
-print("  [Questo può richiedere 5-20 min su simulatore locale]")
-K_train = qkernel.evaluate(x_vec=X_train)
+print(f"  N° coppie uniche: {X_train.shape[0]*(X_train.shape[0]+1)//2}")
+print(f"  Shots per coppia: {N_SHOTS}")
+print(f"  Stima tempo      : ~{X_train.shape[0]*(X_train.shape[0]+1)//2 * 0.008 / 60:.0f}-"
+      f"{X_train.shape[0]*(X_train.shape[0]+1)//2 * 0.02 / 60:.0f} min")
+K_train = compute_kernel_matrix(X_train, X_train, feature_map, backend, symmetric=True)
 print(f"  K_train shape: {K_train.shape}")
 
+# ── 8d. Calcolo K_test ────────────────────────────────────────────────────────
 print(f"\nCalcolo kernel matrix test ({X_test.shape[0]}x{X_train.shape[0]})...")
-K_test = qkernel.evaluate(x_vec=X_test, y_vec=X_train)
+K_test = compute_kernel_matrix(X_test, X_train, feature_map, backend, symmetric=False)
 print(f"  K_test shape: {K_test.shape}")
 
-# Verifica proprietà della matrice kernel:
-# - deve essere simmetrica: K[i,j] = K[j,i]
-# - valori in [0, 1] (è una fidelity/probabilità)
-# - diagonale = 1 (K(x,x) = 1 per ogni x)
-print(f"  Diagonale media: {np.diag(K_train).mean():.4f} (atteso: ~1.0)")
-print(f"  Simmetria max diff: {np.max(np.abs(K_train - K_train.T)):.6f}")
-print(f"  Range valori: [{K_train.min():.4f}, {K_train.max():.4f}]")
+# ── 8e. Verifica proprietà ────────────────────────────────────────────────────
+print(f"  Diagonale media  : {np.diag(K_train).mean():.4f} (atteso: ~1.0)")
+print(f"  Simmetria max err: {np.max(np.abs(K_train - K_train.T)):.6f}")
+print(f"  Range valori     : [{K_train.min():.4f}, {K_train.max():.4f}]")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BLOCCO 9 ── ADDESTRAMENTO SVM CON KERNEL PRECOMPUTED
