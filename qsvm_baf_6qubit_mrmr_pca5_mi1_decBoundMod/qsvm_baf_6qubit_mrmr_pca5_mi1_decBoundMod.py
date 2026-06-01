@@ -491,34 +491,51 @@ plt.close()
 print("[PLOT] Salvato confusion_matrices_6q.png")
 
 # Decision boundaries con proiezione globale PCA(2)
-print("[PLOT] Generazione decision boundaries 2D con PCA globale (tutte le feature)")
+# - SVM classiche: decision boundaries nel piano 2D ottenuto con PCA globale
+#   calcolata su TUTTE le feature finali di X_train
+# - QSVM: embedding 2D ottenuto direttamente dalla matrice kernel quantistica K_train
+#   tramite Kernel PCA con kernel='precomputed'
+print("[PLOT] Generazione visualizzazione definitiva: PCA globale + quantum-kernel embedding")
 
-def plot_decision_boundary(clf, X, y, model_name, ax, kernel_mode=False):
+from sklearn.decomposition import PCA, KernelPCA
+
+def plot_decision_boundary(clf, X, y, model_name, ax):
+    """
+    Disegna la frontiera decisionale di un classificatore addestrato direttamente
+    su coordinate 2D.
+    """
     h = 0.05
     x_min, x_max = X[:, 0].min() - 0.3, X[:, 0].max() + 0.3
     y_min, y_max = X[:, 1].min() - 0.3, X[:, 1].max() + 0.3
-    xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
+    xx, yy = np.meshgrid(
+        np.arange(x_min, x_max, h),
+        np.arange(y_min, y_max, h)
+    )
     grid = np.c_[xx.ravel(), yy.ravel()]
-
-    if kernel_mode:
-        from sklearn.metrics.pairwise import rbf_kernel
-        K_grid = rbf_kernel(grid, X)
-        Z = clf.predict(K_grid)
-    else:
-        Z = clf.predict(grid)
-
+    Z = clf.predict(grid)
     Z = Z.reshape(xx.shape)
+
     ax.contourf(xx, yy, Z, alpha=0.30, cmap="RdBu")
-    ax.scatter(X[y == 0, 0], X[y == 0, 1], c="#636EFA", s=25,
-               edgecolors="white", lw=0.5, label="Legittimo", zorder=3)
-    ax.scatter(X[y == 1, 0], X[y == 1, 1], c="#EF553B", s=35,
-               marker="X", edgecolors="white", lw=0.5, label="Frode", zorder=3)
+    ax.scatter(
+        X[y == 0, 0], X[y == 0, 1],
+        c="#636EFA", s=28,
+        edgecolors="white", lw=0.5,
+        label="Legittimo", zorder=3
+    )
+    ax.scatter(
+        X[y == 1, 0], X[y == 1, 1],
+        c="#EF553B", s=36, marker="X",
+        edgecolors="white", lw=0.5,
+        label="Frode", zorder=3
+    )
+    ax.set_title(model_name, fontsize=12, fontweight="bold")
     ax.set_xlabel("Global PCA 1 [a.u.]")
     ax.set_ylabel("Global PCA 2 [a.u.]")
-    ax.set_title(model_name, fontsize=12, fontweight="bold")
     ax.legend(fontsize=9)
 
-# PCA globale di plotting sulle feature finali
+# -------------------------------------------------------------------------
+# 1. PCA globale di plotting per i modelli classici
+# -------------------------------------------------------------------------
 pca_plot = PCA(n_components=2, random_state=42)
 X_plot_train = pca_plot.fit_transform(X_train)
 X_plot_test = pca_plot.transform(X_test)
@@ -527,9 +544,9 @@ plot_explained = pca_plot.explained_variance_ratio_
 plot_cumulative = np.cumsum(plot_explained)
 
 print(f"[INFO] PCA globale plotting train shape: {X_plot_train.shape}")
-print(f"[INFO] Varianza spiegata plotting - PCplot1: {plot_explained[0]*100:.2f}%")
-print(f"[INFO] Varianza spiegata plotting - PCplot2: {plot_explained[1]*100:.2f}%")
-print(f"[INFO] Varianza cumulativa PCA plotting (2D): {plot_cumulative[-1]*100:.2f}%")
+print(f"[INFO] Varianza spiegata Global PCA 1: {plot_explained[0]*100:.2f}%")
+print(f"[INFO] Varianza spiegata Global PCA 2: {plot_explained[1]*100:.2f}%")
+print(f"[INFO] Varianza cumulativa plotting 2D: {plot_cumulative[-1]*100:.2f}%")
 
 svm_lin_2d = SVC(kernel="linear", C=1.0, random_state=42)
 svm_lin_2d.fit(X_plot_train, y_train)
@@ -539,25 +556,60 @@ svm_rbf_2d = SVC(kernel="rbf", C=1.0, gamma="scale", random_state=42)
 svm_rbf_2d.fit(X_plot_train, y_train)
 print("[FIT] svm_rbf_2d addestrata su PCA globale")
 
-qsvm_2d = SVC(kernel="precomputed", C=1.0, random_state=42)
-from sklearn.metrics.pairwise import rbf_kernel
-K_2d = rbf_kernel(X_plot_train)
-qsvm_2d.fit(K_2d, y_train)
-print("[FIT] qsvm_2d approx addestrata su PCA globale (kernel RBF sul piano proiettato)")
+# -------------------------------------------------------------------------
+# 2. Embedding 2D della QSVM a partire dal kernel quantistico reale
+# -------------------------------------------------------------------------
+kpca_q = KernelPCA(
+    n_components=2,
+    kernel="precomputed",
+    eigen_solver="auto"
+)
+X_q_embed = kpca_q.fit_transform(K_train)
 
+print(f"[INFO] Quantum kernel embedding shape: {X_q_embed.shape}")
+
+# -------------------------------------------------------------------------
+# 3. Figura finale: due boundary classiche + embedding QSVM
+# -------------------------------------------------------------------------
 fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-plot_decision_boundary(svm_lin_2d, X_plot_train, y_train, "SVM Lineare", axes[0])
-plot_decision_boundary(svm_rbf_2d, X_plot_train, y_train, "SVM RBF", axes[1])
-plot_decision_boundary(qsvm_2d, X_plot_train, y_train, "QSVM (approx 2D)", axes[2], kernel_mode=True)
+
+plot_decision_boundary(
+    svm_lin_2d, X_plot_train, y_train,
+    "SVM Lineare — Global PCA",
+    axes[0]
+)
+
+plot_decision_boundary(
+    svm_rbf_2d, X_plot_train, y_train,
+    "SVM RBF — Global PCA",
+    axes[1]
+)
+
+axes[2].scatter(
+    X_q_embed[y_train == 0, 0], X_q_embed[y_train == 0, 1],
+    c="#636EFA", s=28,
+    edgecolors="white", lw=0.5,
+    label="Legittimo", zorder=3
+)
+axes[2].scatter(
+    X_q_embed[y_train == 1, 0], X_q_embed[y_train == 1, 1],
+    c="#EF553B", s=36, marker="X",
+    edgecolors="white", lw=0.5,
+    label="Frode", zorder=3
+)
+axes[2].set_title("QSVM — Quantum Kernel Embedding", fontsize=12, fontweight="bold")
+axes[2].set_xlabel("Kernel PC 1 [a.u.]")
+axes[2].set_ylabel("Kernel PC 2 [a.u.]")
+axes[2].legend(fontsize=9)
 
 fig.suptitle(
-    "Decision Boundaries — Global PCA projection (Training Set, setup 6 qubit)",
+    "Visualizzazione definitiva — Classiche su Global PCA, QSVM su Quantum Kernel Space",
     fontsize=14, fontweight="bold"
 )
 plt.tight_layout()
-plt.savefig("decision_boundaries_6q_global_pca.png", dpi=150)
+plt.savefig("decision_boundaries_6q_definitive.png", dpi=150)
 plt.close()
-print("[PLOT] Salvato decision_boundaries_6q_global_pca.png")
+print("[PLOT] Salvato decision_boundaries_6q_definitive.png")
 
 # -----------------------------------------------------------------------------
 # BLOCCO 11 — Salvataggio risultati
