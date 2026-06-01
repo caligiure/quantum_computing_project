@@ -5,7 +5,7 @@
 
 ## 0. Configurazione dell'Ambiente (WSL e Python)
 
-Per eseguire correttamente la pipeline, specialmente per sfruttare l'accelerazione GPU con Qiskit, è fortemente raccomandato l'uso di **WSL (Windows Subsystem for Linux)**. Di seguito i passaggi per configurare l'ambiente:
+Per eseguire correttamente la pipeline, specialmente per sfruttare l'accelerazione GPU con Qiskit, è fortemente raccomandato l'uso di **WSL (Windows Subsystem for Linux)** o un sistema operativo basato su Linux. Di seguito i passaggi per configurare l'ambiente:
 
 ### 1. Accesso a WSL e navigazione
 Assicurati di aver installato WSL sul tuo sistema Windows. Apri il terminale WSL (es. Ubuntu) e spostati nella directory del progetto (se per esempio si trova sul disco D):

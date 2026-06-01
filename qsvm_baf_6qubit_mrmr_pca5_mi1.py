@@ -137,16 +137,18 @@ top1_mi_score = mi_df_sorted.iloc[0, 0]
 print("\nTop 10 feature per Mutual Information:")
 print(mi_df_sorted.head(10).to_string())
 
+# Assicuriamoci che la top MI sia diversa dalle mRMR (non duplicata)
 if top1_mi_feature in selected_features_mrmr:
+    # La top MI è già stata presa da mRMR → non serve aggiungerla di nuovo
     print(f"\n[MRMR] Nota: la top MI feature '{top1_mi_feature}' è già nel set mRMR")
-    final_feature_list = selected_features_mrmr.tolist()
-    N_QUBITS = len(final_feature_list)
+    final_feature_list = selected_features_mrmr
 else:
-    final_feature_list = selected_features_mrmr.tolist() + [top1_mi_feature]
-    N_QUBITS = len(final_feature_list)
-    print(f"\n[MRMR] Top MI feature libera aggiunta come qubit separato: {top1_mi_feature} (MI={top1_mi_score:.6f})")
+    # Aggiungiamo la top MI come feature in più
+    final_feature_list = selected_features_mrmr + [top1_mi_feature]
+    print(f"\n[MRMR] Top MI feature libera aggiunta: {top1_mi_feature} (MI={top1_mi_score:.6f})")
 
-print(f"[MRMR] Lista finale feature ({len(final_feature_list)} qubit/input): {final_feature_list}")
+print(f"[MRMR] Lista finale feature ({len(final_feature_list)}): {final_feature_list}")
+N_QUBITS = len(final_feature_list)
 
 fig, ax = plt.subplots(figsize=(10, 5))
 mi_df_sorted["MI"].head(15).plot(kind="barh", ax=ax, color="#01696f")
@@ -165,24 +167,40 @@ print("\n" + "=" * 70)
 print("BLOCCO 4 — FEATURE PROJECTION: PCA -> 5 COMPONENTI")
 print("=" * 70)
 
+# Applica PCA alle sole feature selezionate da mRMR (supervisionate)
+X_mrmr = X_scaled_df[selected_features_mrmr].copy()
+n_feat_mrmr = X_mrmr.shape[1]
+
+# Numero di componenti PCA = min(5, numero di feature disponibili)
+N_PCA = min(5, n_feat_mrmr)
 pca = PCA(n_components=N_PCA, random_state=42)
-X_pca = pca.fit_transform(X_scaled)
+X_pca = pca.fit_transform(X_mrmr)
 
 explained = pca.explained_variance_ratio_
 cumulative = np.cumsum(explained)
-mi_feature_values = X_scaled_df[[top1_mi_feature]].values
-X_6 = np.hstack([X_pca, mi_feature_values])
-feature_cols_6 = [f"PC{i}" for i in range(1, N_PCA + 1)] + [top1_mi_feature]
-N_QUBITS = X_6.shape[1]
 
-print("Varianza spiegata dalle 5 componenti PCA:")
+print(f"[PCA] PCA applicata su feature mRMR: {selected_features_mrmr}")
+print("Varianza spiegata dalle componenti PCA:")
 for i, (ev, cum) in enumerate(zip(explained, cumulative), start=1):
     print(f" PC{i}: {ev*100:.2f}% (cumulativo: {cum*100:.2f}%)")
 
-print(f"\n[INFO] I primi 5 input sono PCA: PC1, PC2, PC3, PC4, PC5")
-print(f"[INFO] Il 6° input è la feature supervisionata: {top1_mi_feature}")
-print(f"[INFO] PCA(5) spiega {cumulative[-1]*100:.2f}% della varianza totale")
-print("[INFO] Il 6° qubit non aumenta la varianza PCA, ma preserva una feature altamente informativa")
+print(f"\n[INFO] PCA({N_PCA}) spiega {cumulative[-1]*100:.2f}% della varianza sulle feature mRMR")
+
+# Se la top MI è già tra le mRMR, non la aggiungiamo di nuovo
+if top1_mi_feature in selected_features_mrmr:
+    X_6 = X_pca
+    feature_cols_6 = [f"PC{i}" for i in range(1, N_PCA + 1)]
+    print(f"[INFO] La top MI '{top1_mi_feature}' è già inclusa nelle feature mRMR usate dalla PCA")
+    print("[INFO] Nessuna feature aggiuntiva separata viene concatenata")
+else:
+    mi_feature_values = X_scaled_df[[top1_mi_feature]].values
+    X_6 = np.hstack([X_pca, mi_feature_values])
+    feature_cols_6 = [f"PC{i}" for i in range(1, N_PCA + 1)] + [top1_mi_feature]
+    print(f"[INFO] Aggiunta feature MI separata: {top1_mi_feature}")
+
+N_QUBITS = X_6.shape[1]
+
+print(f"[INFO] Feature finali per i qubit ({N_QUBITS}): {feature_cols_6}")
 
 fig, ax = plt.subplots(figsize=(8.5, 4.8))
 labels = [f"PC{i}" for i in range(1, N_PCA + 1)]
@@ -190,10 +208,15 @@ ax.bar(labels, explained * 100, color="#01696f", alpha=0.88)
 ax.plot(labels, cumulative * 100, "o--", color="#EF553B", lw=2, label="Cumulativo PCA")
 for i, c in enumerate(cumulative):
     ax.annotate(f"{c*100:.1f}%", (i, c*100 + 0.6), ha="center", fontsize=10)
-ax.axhline(cumulative[-1] * 100, color="#636EFA", linestyle=":", lw=2,
-           label=f"PCA(5) = {cumulative[-1]*100:.1f}%")
+ax.axhline(
+    cumulative[-1] * 100,
+    color="#636EFA",
+    linestyle=":",
+    lw=2,
+    label=f"PCA({N_PCA}) = {cumulative[-1]*100:.1f}%"
+)
 ax.set_ylabel("Varianza spiegata (%)")
-ax.set_title(f"PCA(5) + top MI feature: {top1_mi_feature}")
+ax.set_title("PCA sulle feature selezionate da mRMR")
 ax.legend()
 plt.tight_layout()
 plt.savefig("pca_plus_mi_6q.png", dpi=150)
@@ -295,10 +318,10 @@ try:
         fold=20,
         scale=0.8
     )
-    fig.savefig("zzfeaturemap_7q.png", dpi=300, bbox_inches="tight")
-    print("[SAVE] Salvato zzfeaturemap_7q.png (rendering Matplotlib)")
+    fig.savefig("zzfeaturemap_6q.png", dpi=300, bbox_inches="tight")
+    print("[SAVE] Salvato zzfeaturemap_6q.png (rendering Matplotlib)")
 except Exception as e:
-    print(f"[WARN] Impossibile salvare zzfeaturemap_7q.png con output='mpl': {e}")
+    print(f"[WARN] Impossibile salvare zzfeaturemap_6q.png con output='mpl': {e}")
 
 try:
     backend = AerSimulator(method="statevector", device="GPU")
@@ -559,8 +582,8 @@ print("OUTPUT GENERATI:")
 print("- mi_scores_6q.png")
 print("- pca_plus_mi_6q.png")
 print("- zzfeaturemap_6q.txt")
-print("- zzfeaturemap_7q.pdf")
-print("- zzfeaturemap_7q.png")
+print("- zzfeaturemap_6q.pdf")
+print("- zzfeaturemap_6q.png")
 print("- kernel_matrix_6q.png")
 print("- benchmark_metrics_6q.png")
 print("- confusion_matrices_6q.png")
