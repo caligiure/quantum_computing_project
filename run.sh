@@ -7,4 +7,4 @@ cd /mnt/d/MyProjects/quantum_computing_project
 source ~/.venvs/quantum_env/bin/activate
 
 # Run the Python script
-python3 qsvm_baf_6qubit_pca5_mi1.py
+python3 qsvm_baf_8qubit_pca7_mi1_verbose.py
