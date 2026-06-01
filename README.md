@@ -3,6 +3,49 @@
 
 ---
 
+## 0. Configurazione dell'Ambiente (WSL e Python)
+
+Per eseguire correttamente la pipeline, specialmente per sfruttare l'accelerazione GPU con Qiskit, è fortemente raccomandato l'uso di **WSL (Windows Subsystem for Linux)**. Di seguito i passaggi per configurare l'ambiente:
+
+### 1. Accesso a WSL e navigazione
+Assicurati di aver installato WSL sul tuo sistema Windows. Apri il terminale WSL (es. Ubuntu) e spostati nella directory del progetto (se per esempio si trova sul disco D):
+```bash
+cd /mnt/d/MyProjects/quantum_computing_project
+```
+
+### 2. Installazione di Python e Virtual Environment
+Assicurati di avere una versione di Python compatibile (es. Python 3.12). Aggiorna i pacchetti e installa i moduli necessari:
+```bash
+sudo apt update
+sudo apt install python3.12 python3.12-venv python3.12-dev -y
+```
+
+### 3. Creazione e Attivazione dell'Ambiente Virtuale
+Per prevenire problemi di permessi incrociati con il file system NTFS di Windows, crea l'ambiente virtuale all'interno del file system nativo di Linux (es. nella tua cartella home `~/.venvs`):
+```bash
+# Crea la cartella per gli ambienti virtuali (se non esiste)
+mkdir -p ~/.venvs
+
+# Crea l'ambiente virtuale specifico per il progetto
+python3.12 -m venv ~/.venvs/quantum_env
+
+# Attiva l'ambiente virtuale
+source ~/.venvs/quantum_env/bin/activate
+```
+*(Nota: dovrai eseguire il comando di attivazione `source` ogni volta che apri un nuovo terminale).*
+
+### 4. Installazione delle Dipendenze
+Con l'ambiente attivato, installa le librerie necessarie. Per utilizzare l'accelerazione GPU NVIDIA, installa la versione corretta di Qiskit e il pacchetto `qiskit-aer-gpu`:
+```bash
+pip install "qiskit==1.1.1"
+pip install qiskit-aer-gpu
+pip install scikit-learn pandas numpy matplotlib seaborn imbalanced-learn
+```
+
+Una volta completata la configurazione, puoi eseguire comodamente i programmi Python all'interno di WSL (o usare gli script `run.sh` / `run.bat` forniti).
+
+---
+
 ## 1. Introduzione e contesto
 
 Il dataset **Bank Account Fraud (BAF)**, rilasciato al NeurIPS 2022, rappresenta un benchmark realistico per la rilevazione di frodi nell'apertura di conti bancari. Contiene circa 1 milione di richieste di conto corrente, di cui meno del 2% classificate come fraudolente, ed è caratterizzato da un forte sbilanciamento tra le classi e dalla presenza di valori mancanti codificati come `-1`.
