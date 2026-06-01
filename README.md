@@ -1,334 +1,296 @@
-# Relazione Tecnica: Classificazione di Frodi Bancarie con Quantum SVM
-### Pipeline QSVM sul Dataset BAF NeurIPS 2022 — Analisi completa del codice e dei risultati
+# Relazione Tecnica: QSVM 6 qubit sul dataset Bank Account Fraud (BAF)
+
+## 0. Scopo del progetto
+
+Questo progetto implementa e analizza una pipeline completa di **Quantum Support Vector Machine (QSVM)** su 6 qubit applicata al dataset **Bank Account Fraud (BAF) – NeurIPS 2022**, con l’obiettivo di confrontare in modo rigoroso un classificatore basato su kernel quantistico con classificatori classici (SVM lineare e SVM RBF) per il problema di rilevazione di frodi nell’apertura di conti bancari.
+
+La pipeline segue la sequenza:
+
+1. Caricamento e pulizia del dataset BAF.
+2. Preprocessing classico (encoding, imputazione, standardizzazione).
+3. Calcolo della **Mutual Information** (MI) per valutare l’importanza delle feature rispetto al target.
+4. Riduzione dimensionale tramite **PCA a 5 componenti**.
+5. Selezione della **migliore feature supervisionata** (top-MI) e costruzione di uno spazio finale a **6 dimensioni**.
+6. Bilanciamento delle classi e riscalamento angolare in 
+   \([-π, π]\) per l’input della `ZZFeatureMap` a 6 qubit.
+7. Costruzione del **kernel quantistico** tramite circuito compute–uncompute con Qiskit Aer.
+8. Addestramento della **QSVM** (SVC con `kernel="precomputed"`) e confronto con SVM lineare e SVM RBF classiche.
+9. Analisi quantitativa e grafica dei risultati, con salvataggio di metriche, matrici di confusione e heatmap della matrice kernel.
+
+L’intero flusso è implementato nel file Python:
+
+- `qsvm_baf_6qubit_pca5_mi1.py`
 
 ---
 
-## 0. Configurazione dell'Ambiente (WSL e Python)
+## 1. Configurazione dell’ambiente
 
-Per eseguire correttamente la pipeline, specialmente per sfruttare l'accelerazione GPU con Qiskit, è fortemente raccomandato l'uso di **WSL (Windows Subsystem for Linux)** o un sistema operativo basato su Linux. Di seguito i passaggi per configurare l'ambiente:
+Per eseguire correttamente la pipeline, è consigliabile un ambiente Linux (nativo o via **WSL** su Windows), con Python 3.11/3.12 e un ambiente virtuale dedicato.
 
-1. Creazione e Attivazione dell'Ambiente Virtuale
+### 1.1 Creazione ambiente virtuale (esempio WSL)
 
-Per prevenire problemi di permessi incrociati con il file system NTFS di Windows, crea l'ambiente virtuale all'interno del file system nativo di Linux (es. nella tua cartella home `~/.venvs`):
 ```bash
-# Crea la cartella per gli ambienti virtuali (se non esiste)
 mkdir -p ~/.venvs
-
-# Crea l'ambiente virtuale specifico per il progetto
 python3.12 -m venv ~/.venvs/quantum_env
-
-# Attiva l'ambiente virtuale
 source ~/.venvs/quantum_env/bin/activate
 ```
-*(Nota: dovrai eseguire il comando di attivazione `source` ogni volta che apri un nuovo terminale).*
 
-2. Installazione delle Dipendenze
-Con l'ambiente attivato, installa le librerie necessarie. Per utilizzare l'accelerazione GPU NVIDIA, installa la versione corretta di Qiskit e il pacchetto `qiskit-aer-gpu`:
+### 1.2 Installazione dipendenze
+
+All’interno dell’ambiente virtuale:
+
 ```bash
 pip install "qiskit==1.1.1"
-pip install qiskit-aer-gpu
+pip install qiskit-aer-gpu    # opzionale, se è disponibile una GPU NVIDIA
 pip install scikit-learn pandas numpy matplotlib seaborn imbalanced-learn
 ```
 
-Una volta completata la configurazione, puoi eseguire comodamente i programmi Python all'interno di WSL (o usare gli script `run.sh` / `run.bat` forniti).
+Se la GPU non è disponibile o non configurata, lo script effettuerà automaticamente il fallback su **CPU**.
+
+Per eseguire la pipeline è sufficiente avere nella working directory:
+
+- `Base.csv` (dataset BAF preprocessato di partenza)
+- `qsvm_baf_6qubit_pca5_mi1-1-2.py`
 
 ---
 
-## 1. Introduzione e contesto
+## 2. Struttura generale dello script
 
-Il dataset **Bank Account Fraud (BAF)**, rilasciato al NeurIPS 2022, rappresenta un benchmark realistico per la rilevazione di frodi nell'apertura di conti bancari. Contiene circa 1 milione di richieste di conto corrente, di cui meno del 2% classificate come fraudolente, ed è caratterizzato da un forte sbilanciamento tra le classi e dalla presenza di valori mancanti codificati come `-1`.
+Lo script è suddiviso in blocchi numerati, con stampe esplicative a console. Di seguito una panoramica sintetica:
 
-L'obiettivo di questo lavoro è costruire una pipeline completa che:
-1. Preprocessi il dataset in modo corretto e rigoroso
-2. Riduca le feature da 28 a esattamente **4 dimensioni**, compatibili con una ZZFeatureMap a 4 qubit
-3. Addestri un classificatore QSVM basato su kernel quantistico calcolato con il formalismo compute-uncompute
-4. Confronti le prestazioni con baseline classiche (SVM Lineare e SVM RBF)
+- **Blocco 1** – Caricamento dataset BAF (`Base.csv`).
+- **Blocco 2** – Preprocessing (drop colonne, encoding categoriche, imputazione, standardizzazione).
+- **Blocco 3** – Calcolo della Mutual Information e scelta della top feature supervisionata.
+- **Blocco 4** – PCA a 5 componenti + aggiunta della top feature (spazio a 6 dimensioni).
+- **Blocco 5** – Bilanciamento delle classi (150 campioni per classe, 300 totali).
+- **Blocco 6** – Scaling angolare in \([-π, π]\) per la `ZZFeatureMap`.
+- **Blocco 7** – Train/Test split 75/25 stratificato.
+- **Blocco 8** – Costruzione del kernel quantistico (ZZFeatureMap 6 qubit + compute–uncompute).
+- **Blocco 9** – Addestramento della QSVM e delle SVM classiche, calcolo delle metriche.
+- **Blocco 10** – Generazione dei grafici (heatmap kernel, benchmark metriche, confusion matrix, decision boundaries 2D).
+- **Blocco 11** – Salvataggio dei risultati (CSV, NPY, immagini e un breve `readme_6q.txt`).
 
----
-
-## 2. Architettura della pipeline
-
-La pipeline è strutturata in 12 blocchi sequenziali. Lo schema logico è il seguente:
-
-```
-Base.csv
-   │
-   ▼
-[Blocco 1] Caricamento e ispezione
-   │
-   ▼
-[Blocco 2] Preprocessing
-   ├── Drop: device_fraud_count, month
-   ├── LabelEncoding colonne categoriche
-   ├── Imputazione -1 con mediana
-   └── StandardScaler (µ=0, σ=1)
-   │
-   ▼
-[Blocco 3] Mutual Information (diagnostico)
-   │
-   ▼
-[Blocco 4] PCA → 4 componenti (= 4 qubit)
-   │
-   ▼
-[Blocco 5] Bilanciamento classi (150 per classe → 300 campioni)
-   │
-   ▼
-[Blocco 6] Scaling angolare in [-π, +π]
-   │
-   ▼
-[Blocco 7] Train/Test split 75/25 stratificato
-   │
-   ├──────────────────────────────────┐
-   ▼                                  ▼
-[Blocco 8] ZZFeatureMap            [Blocco 10] SVM Lineare + SVM RBF
-Kernel quantistico compute-uncompute   (baseline classica)
-   │
-   ▼
-[Blocco 9] SVC (kernel='precomputed')
-   │
-   ▼
-[Blocco 11] Visualizzazioni e confronto
-   │
-   ▼
-[Blocco 12] Salvataggio risultati
-```
+Nei paragrafi successivi ogni blocco viene descritto in dettaglio.
 
 ---
 
-## 3. Dettaglio del preprocessing (Blocchi 1–2)
+## 3. Blocco 1 – Caricamento del dataset
 
-### 3.1 Ispezione del dataset
-
-Il dataset originale presenta 30 colonne, di cui 28 feature, la variabile target `fraud_bool` e due colonne eliminate: `device_fraud_count` (contiene informazioni sulle frodi future, fonte di data leakage) e `month` (variabile temporale non predittiva nella forma in cui è codificata).
-
-### 3.2 Encoding e imputazione
-
-Le colonne categoriche (`payment_type`, `source`, `device_os`, `employment_status`) vengono trasformate tramite `LabelEncoder`. I valori `-1`, usati nel dataset originale per indicare valori mancanti nelle colonne `prev_address_months_count`, `current_address_months_count`, `intended_balcon_amount` e `bank_months_count`, vengono sostituiti con la **mediana della colonna calcolata escludendo i -1 stessi**. Questa scelta è corretta metodologicamente: usare i -1 nel calcolo della mediana sposterebbe verso il basso la stima del valore tipico.
-
-### 3.3 StandardScaler
-
-Tutte le feature numeriche vengono standardizzate con `StandardScaler` prima del calcolo della Mutual Information e della PCA. Senza questo passaggio, feature con range molto ampi (es. `zip_count_4w` fino a 6.700) avrebbero dominato la decomposizione PCA, alterando i risultati indipendentemente dalla loro reale informatività.
+Questo blocco è puramente descrittivo e serve a verificare che i dati siano stati caricati correttamente e che lo sbilanciamento fra classi sia in linea con le aspettative (circa 1–2% di frodi nella versione completa, prima del successivo bilanciamento su un sotto-campione).
 
 ---
 
-## 4. Feature selection: Mutual Information (Blocco 3)
+## 4. Blocco 2 – Preprocessing
 
-La Mutual Information (MI) misura la dipendenza statistica tra ciascuna feature e il target `fraud_bool`, catturando relazioni sia lineari sia non lineari. Il calcolo è effettuato sulle feature standardizzate con `mutual_info_classif` di scikit-learn.
+Il preprocessing prepara i dati per le fasi successive di feature selection e proiezione. Le operazioni includono:
 
-![Grafico MI Scores](mi_scores.jpg)
-
-I punteggi mostrano una chiara gerarchia:
-
-| Feature | MI Score | Interpretazione |
-|---|---|---|
-| `email_is_free` | ~0.119 | Forte predittore: le frodi usano più spesso email gratuite |
-| `has_other_cards` | ~0.114 | Indicatore di profilo finanziario |
-| `keep_alive_session` | ~0.113 | Comportamento anomalo di sessione |
-| `phone_home_valid` | ~0.112 | Validità del numero di telefono fisso |
-| `proposed_credit_limit` | ~0.080 | Limite di credito richiesto |
-| `phone_mobile_valid` | ~0.072 | Validità numero mobile |
-| `device_os` | ~0.070 | Sistema operativo del dispositivo |
-
-Le prime 4 feature hanno punteggi molto simili tra loro (0.11–0.12), suggerendo che il segnale predittivo è distribuito su più variabili e non concentrato su una sola. Le feature in fondo alla lista (es. `device_distinct_emails_8w`, `prev_address_months_count`) contribuiscono in modo trascurabile.
-
-> **Ruolo della MI nella pipeline finale**: in questa versione del codice la MI è usata in modo puramente diagnostico, per comprendere quali feature portano informazione sul target. La proiezione finale verso i 4 qubit viene effettuata interamente tramite PCA, che è una trasformazione lineare non supervisionata. Una versione migliorata potrebbe integrare la feature con MI massima (es. `email_is_free`) come quarta dimensione in luogo della 4ª componente principale.
+- Rimozione di colonne non utilizzabili
+- Encoding delle variabili categoriche: tutte le colonne di tipo `object` o `category` (eccetto `fraud_bool`) vengono trasformate con `LabelEncoder`, ottenendo feature numeriche intere.
+- Conversione numerica forzata: garantisce che **tutte** le feature in `X` siano numeriche e compatibili con PCA e MI.
+- Imputazione dei valori mancanti: si calcola la mediana **escludendo i -1**, si sostituiscono i `-1` con la mediana. Questa scelta evita che il valore `-1` sposti la stima del valore tipico verso il basso e rappresenta una strategia robusta per l’imputazione di dati mancanti.
+- Separazione feature/target e standardizzazione
 
 ---
 
-## 5. Feature projection: PCA a 4 componenti (Blocco 4)
+## 5. Blocco 3 – Mutual Information e scelta della top feature
 
-La PCA proietta le 28 feature standardizzate su 4 assi ortogonali che massimizzano la varianza spiegata, riducendo lo spazio di input alle esatte 4 dimensioni richieste dalla `ZZFeatureMap`.
+In questo blocco si calcola la **Mutual Information** fra ogni feature e il target `fraud_bool` (usando `mutual_info_classif` di scikit-learn).
 
-![Grafico Scree Plot PCA](pca_scree-2.jpg)
-
-### 5.1 Varianza spiegata
-
-| Componente | Varianza individuale | Varianza cumulativa |
-|---|---|---|
-| PC1 | 8.9% | 8.9% |
-| PC2 | 6.8% | 15.7% |
-| PC3 | 5.7% | 21.4% |
-| PC4 | 5.6% | 27.0% |
-
-La varianza cumulativa al 27.0% è bassa ma attesa: il dataset BAF è ad alta dimensionalità e le feature sono debolmente correlate tra loro, per cui nessuna componente cattura una porzione ampia di varianza. Questo implica che la compressione sacrifica circa il 73% dell'informazione originale, un costo inevitabile nel vincolo dei 4 qubit.
-
-### 5.2 Distribuzione dei campioni nello spazio PCA
-
-![Scatter PC1 vs PC2](scatter_pc1_pc2-1.jpg)
-
-Lo scatter plot mostra i 300 campioni bilanciati (150 legittimi, 150 frodi) nello spazio PC1–PC2, già riscalati in radianti. Le due classi risultano **fortemente sovrapposte**: non esiste un confine lineare netto, e le frodi (in rosso) sono distribuite in modo irregolare su tutto il dominio. Questa osservazione è fondamentale per interpretare i risultati dei classificatori: il problema è genuinamente difficile in questo spazio proiettato.
+Questa feature a massima informazione mutua sarà poi preservata esplicitamente come **sesto input** della rappresentazione a 6 dimensioni usata dalla QSVM.
 
 ---
 
-## 6. Bilanciamento e scaling angolare (Blocchi 5–6)
+## 6. Blocco 4 – PCA a 5 componenti + feature supervisionata
 
-### 6.1 Bilanciamento
+L’obiettivo di questo blocco è costruire uno spazio di input **a 6 dimensioni** che combini:
 
-Il dataset originale è fortemente sbilanciato (~2% di frodi). Per addestrare la QSVM in modo corretto e senza che il classificatore ignori la classe minoritaria, vengono selezionati 150 campioni per classe tramite undersampling (classe maggioritaria) e oversampling con rimpiazzo se necessario (classe minoritaria). Il campione totale è quindi 300 osservazioni bilanciate 50/50.
+- **5 componenti principali PCA** calcolate su tutte le feature standardizzate.
+- **1 feature supervisionata** (la `top_mi_feature`) che ha la massima dipendenza informativa con il target.
 
-La dimensione di 300 campioni è imposta dal costo computazionale: calcolare la matrice kernel con il metodo compute-uncompute richiede \( \frac{N(N+1)}{2} \) esecuzioni di circuito per il solo training set. Con 225 campioni di training (75% di 300), ciò corrisponde a circa **25.425 circuiti quantistici**, ognuno simulato con 8.192 shots.
+PCA (Principal Component Analysis) è una trasformazione lineare che permette di ridurre la dimensionalità del dataset, preservando la varianza spiegata. La sua funzione è quella di proiettare i dati su un nuovo sistema di assi cartesiani ortogonali, detti "componenti principali", in modo tale che la varianza dei dati sia massimizzata lungo queste direzioni.
 
-### 6.2 Scaling angolare
+![pca_plus_mi_6q.png](./qsvm_baf_6qubit_pca5_mi/pca_plus_mi_6q.png)
 
-Le 4 componenti PCA vengono riscalate da `MinMaxScaler` nell'intervallo \( [-\pi, +\pi] \). Questo passaggio è **critico per la correttezza fisica del circuito**: la `ZZFeatureMap` usa i valori di input come angoli di rotazione nelle porte di fase \( P(\theta) \). Senza questo scaling, i valori PCA (dell'ordine di ±3 float) potrebbero coincidentalmente restare in un range accettabile, ma in generale si rischierebbe di avere angoli troppo grandi o troppo piccoli, compromettendo l'espressività del circuito.
+Per la costruzione dello spazio a 6 dimensioni i estraggono i valori della `top_mi_feature` dal DataFrame standardizzato `X_scaled_df` e li si concatena alle 5 componenti PCA.
+
+Questo compromesso aumenta la varianza spiegata rispetto ad una PCA a 4 componenti e, allo stesso tempo, mantiene una dimensione supervisionata fortemente predittiva.
 
 ---
 
-## 7. Circuito quantistico: ZZFeatureMap (Blocco 8)
+## 7. Blocco 5 – Bilanciamento delle classi
 
-### 7.1 Struttura del circuito
+Per ridurre lo sbilanciamento e contenere il costo computazionale del kernel quantistico, lo script lavora su un **sotto-campione bilanciato** del dataset.
 
-La `ZZFeatureMap` con `feature_dimension=4`, `reps=1` ed `entanglement='full'` produce il circuito seguente (output Qiskit):
+1. Si crea un DataFrame `df_6` che contiene le 6 feature finali e il target `fraud_bool`.
+2. Si separano i casi legittimi (`fraud_bool = 0`) e fraudolenti (`fraud_bool = 1`).
+3. Si campionano **150 esempi per ciascuna classe** (300 in totale), usando `resample` con `replace=False` per la classe maggioritaria e `replace=True` se la classe minoritaria dispone di meno di 150 osservazioni.
+4. Si mescolano i 300 esempi ottenuti e si estraggono `X_bal` (feature) e `y_bal` (target).
 
-```
-q_0: ┤ H ├┤ P(2x[0]) ├──■────────────────────────────────────■────■──...
-q_1: ┤ H ├┤ P(2x[1]) ├┤ X ├┤ P(2(π-x[0])(π-x[1])) ├┤ X ├──┼────...
-q_2: ┤ H ├┤ P(2x[2]) ├─────────────────────────────────┤ X ├┤ P(2(π-x[0])(π-x[2])) ├...
-q_3: ┤ H ├┤ P(2x[3]) ├──────────────────────────────────────────────────...
+Questo setup mantiene il problema relativamente piccolo (permette di calcolare il kernel quantistico in tempi ragionevoli) e garantisce classi bilanciate per l’addestramento.
+
+---
+
+## 8. Blocco 6 – Scaling angolare per la ZZFeatureMap
+
+La `ZZFeatureMap` di Qiskit interpreta gli input numerici come **angoli di rotazione** sui qubit. Per questo motivo, le 6 feature in `X_bal` vengono riscalate nell’intervallo \([-π, π]\) mediante un `MinMaxScaler`:
+
+```python
+angle_scaler = MinMaxScaler(feature_range=(-np.pi, np.pi))
+X_angle = angle_scaler.fit_transform(X_bal)
 ```
 
-Il circuito si compone di tre tipi di gate:
+Dopo questa trasformazione, ogni dimensione del vettore è un angolo in radianti, pronto per essere fornito alla `ZZFeatureMap` a 6 qubit.
+---
 
-1. **Hadamard (H)**: porta ogni qubit in una sovrapposizione uniforme \( |+\rangle = \frac{1}{\sqrt{2}}(|0\rangle + |1\rangle) \)
-2. **Fasi singole \( P(2x_i) \)**: codificano il valore della feature \( x_i \) come rotazione di fase sul qubit \( i \)
-3. **Fasi entangled \( P(2(\pi - x_i)(\pi - x_j)) \)** applicate tramite coppie CNOT: codificano le **interazioni quadratiche** tra feature diverse, creando correlazioni quantistiche tra i qubit
+## 9. Blocco 7 – Train/Test split
 
-### 7.2 Mappa di feature indotta
+Si esegue uno split **75/25 stratificato** sul dataset bilanciato:
 
-La funzione di encoding produce lo stato:
-\[ |\Phi(x)\rangle = U_{\Phi}(x)|0\rangle^{\otimes 4} \]
+- `X_train` contiene 225 campioni.
+- `X_test` contiene 75 campioni.
+- Le classi rimangono bilanciate in entrambi i sottoinsiemi.
 
-dove \( U_{\Phi}(x) \) è il circuito descritto. Con `entanglement='full'` vengono create tutte le \( \binom{4}{2} = 6 \) interazioni a coppie, rendendo il circuito più espressivo rispetto all'entanglement lineare (solo 3 coppie).
+---
 
-### 7.3 Calcolo del kernel: metodo compute-uncompute
+## 10. Blocco 8 – Quantum kernel con Qiskit
 
-Il kernel quantistico è calcolato manualmente con il paradigma compute-uncompute:
+Questo è il cuore quantistico della pipeline. Lo script costruisce una `ZZFeatureMap` a 6 qubit e utilizza il **formalismo compute–uncompute** per stimare una matrice kernel di tipo fidelity.
 
-\[ K(x_i, x_j) = |\langle 0 | U_{\Phi}^\dagger(x_j) U_{\Phi}(x_i) | 0 \rangle|^2 \]
+### ZZFeatureMap a 6 qubit
 
-Il circuito eseguito per ogni coppia è:
+La feature map è definita come:
 
+```python
+feature_map = ZZFeatureMap(feature_dimension=N_QUBITS, reps=1, entanglement="full")
 ```
-|0...0⟩ → U_Φ(xi) → U_Φ†(xj) → misura P(|0000⟩)
+
+- `feature_dimension = 6` perché lo spazio di input ha 6 dimensioni.
+- `reps = 1` per mantenere la profondità del circuito contenuta.
+- `entanglement = "full"` per permettere interazioni ZZ fra tutti i qubit, aumentando l’espressività del kernel.
+
+### Backend quantistico
+
+Lo script utilizza `AerSimulator` con metodo `statevector` e tenta prima di usare la GPU (`device="GPU"`). Se questa non è disponibile, effettua automaticamente il fallback su CPU.
+
+Il numero di shots per stimare ciascuna entry del kernel è `N_SHOTS = 8192`, un compromesso fra precisione statistica e tempo di esecuzione.
+
+### Compute–uncompute per il kernel
+
+Per due vettori di input \(x_i, x_j\) (già angolarizzati) si costruisce il circuito.
+
+Lo script definisce due funzioni:
+
+- `compute_kernel_entry(xi, xj, fmap, backend, shots)` – calcola una singola entry.
+- `compute_kernel_matrix(X_a, X_b, fmap, backend, shots, symmetric)` – calcola un’intera matrice kernel fra i vettori di `X_a` e `X_b`, sfruttando la simmetria quando `X_a` e `X_b` coincidono.
+
+### Matrici K_train e K_test
+
+Si calcola innanzitutto la matrice kernel del train set:
+
+```python
+K_train = compute_kernel_matrix(X_train, X_train, feature_map, backend, symmetric=True)
 ```
 
-La probabilità misurata di osservare lo stato \( |0000\rangle \) dopo questo circuito è la **fidelity** tra i due stati quantistici \( |\Phi(x_i)\rangle \) e \( |\Phi(x_j)\rangle \), che funge da misura di similarità (valore del kernel). Questo kernel è per costruzione **simmetrico** e **definito positivo**, caratteristiche necessarie per l'utilizzo con SVM.
+Questa matrice è **simmetrica** per costruzione e viene verificata numericamente.
 
-### 7.4 Matrice kernel quantistica
+Successivamente si calcola la matrice kernel fra test e train:
 
-![Matrice Kernel Quantistica](kernel_matrix-1.jpg)
-
-La heatmap della matrice kernel \( K_{train} \) (225×225 campioni) mostra:
-
-- **Diagonale a 1.0** (scuro): ogni campione è identico a sé stesso, \( K(x_i, x_i) = 1 \) per definizione
-- **Valori fuori diagonale molto bassi** (~0.0–0.05, colore giallo chiaro): la maggior parte delle coppie produce una fidelity quasi nulla
-- **Poche strutture locali**: sporadici punti più chiari distribuiti casualmente, senza blocchi di similarità strutturati
-
-Questo pattern è interpretabile come una **matrice quasi-diagonale**, in cui il kernel distingue formalmente ogni campione da tutti gli altri, ma non riesce a costruire regioni di similarità coerenti e discriminative. In pratica, l'embedding quantistico sta proiettando i dati in uno spazio molto ad alta dimensione (lo spazio di Hilbert a 4 qubit, di dimensione \( 2^4 = 16 \)) in modo eccessivamente dispersivo, riducendo la capacità discriminativa del classificatore.
+```python
+K_test = compute_kernel_matrix(X_test, X_train, feature_map, backend, symmetric=False)
+```
 
 ---
 
-## 8. Addestramento e risultati (Blocchi 9–10)
+## 11. Blocco 9 – QSVM e baseline classiche
 
-### 8.1 SVM con kernel precomputed
+Una volta ottenute `K_train` e `K_test`, lo script addestra e valuta:
 
-La matrice \( K_{train} \) viene passata direttamente come matrice di Gram a `sklearn.svm.SVC(kernel='precomputed', C=1.0)`. Il classificatore opera esclusivamente sulle similarità quantistiche, senza mai vedere le feature originali né le componenti PCA.
+1. **QSVM (6 qubit: PCA5 + MI1)** – un `SVC` con `kernel="precomputed"` usando direttamente le matrici kernel quantistiche.
+2. **SVM lineare** – un `SVC` classico con `kernel="linear"` addestrato sui vettori `X_train` (6 dimensioni).
+3. **SVM RBF** – un `SVC` classico con `kernel="rbf"` addestrato sugli stessi vettori.
 
-### 8.2 Confronto delle metriche
+Per ciascun modello vengono calcolate le principali metriche di classificazione sul test set:
 
-![Confronto metriche benchmark](benchmark_metrics-1.jpg)
+- Accuracy.
+- Precision.
+- Recall.
+- F1-score.
+- ROC-AUC (tramite probabilità predette).
 
-| Modello | Accuracy | Precision | Recall | F1-Score | ROC-AUC |
-|---|---|---|---|---|---|
-| **QSVM (ZZFeatureMap)** | 0.520 | 0.513 | 0.541 | 0.526 | 0.585 |
-| **SVM Lineare** | 0.613 | 0.611 | 0.595 | 0.603 | 0.709 |
-| **SVM RBF** | **0.693** | **0.684** | **0.703** | **0.693** | **0.712** |
-
-La SVM RBF domina su tutte le metriche. La SVM lineare si colloca a metà. La QSVM è il modello con prestazioni più basse, con un'Accuracy di 0.52 che è solo marginalmente superiore alla classificazione casuale (0.50 su dataset bilanciato), e un ROC-AUC di 0.585 che indica una capacità discriminativa molto debole.
-
-### 8.3 Confusion matrices
-
-![Confusion Matrices](confusion_matrices.jpg)
-
-Le confusion matrix sul test set (50 campioni, 25 per classe) evidenziano il comportamento di ciascun modello:
-
-| Modello | Veri Positivi (Frodi) | Veri Negativi (Legit.) | Falsi Positivi | Falsi Negativi |
-|---|---|---|---|---|
-| QSVM | 20 | 19 | 19 | 17 |
-| SVM Lineare | 22 | 24 | 14 | 15 |
-| SVM RBF | 26 | 26 | 12 | 11 |
-
-- La **QSVM** classifica 39 campioni su 50 correttamente, ma con un pattern quasi casuale: sbaglia quasi la metà dei casi per entrambe le classi
-- La **SVM Lineare** migliora sensibilmente, soprattutto nella classe legittima, riducendo i falsi positivi da 19 a 14
-- La **SVM RBF** è il modello più bilanciato: raggiunge 26/25 su entrambe le classi, con il minor numero di errori sia per i falsi positivi sia per i falsi negativi
-
-### 8.4 Decision boundaries
-
-![Decision Boundaries](decision_boundaries-1.jpg)
-
-Il grafico delle decision boundaries (calcolate sulle prime 2 componenti PCA) mostra:
-
-- **SVM Lineare**: frontiera retta, separa il piano in due semipiani con una diagonale che tende a privilegiare la classe frode in basso a destra
-- **SVM RBF**: frontiera curva e più adattiva, che si piega attorno a cluster locali; la maggiore flessibilità spiega il miglioramento delle prestazioni
-- **QSVM (approx 2D)**: frontiera non lineare con struttura irregolare; la visualizzazione è però un'**approssimazione** calcolata con un kernel RBF classico sulla griglia 2D, non con il vero kernel quantistico 4D, quindi deve essere interpretata solo qualitativamente
-
-Il grafico conferma visivamente la forte sovrapposizione delle classi: nessun classificatore riesce a delimitare regioni pulite di frodi e legittimi, il che è consistente con le metriche numeriche.
+Questo consente un confronto diretto tra le prestazioni della QSVM e delle SVM classiche sullo **stesso spazio di input a 6 dimensioni**.
 
 ---
 
-## 9. Analisi critica dei risultati
+## 12. Blocco 10 – Grafici e visualizzazioni
 
-### 9.1 Punti di forza
+Per una comprensione più intuitiva dei risultati, lo script genera diversi grafici.
 
-**Correttezza del workflow**: la pipeline è implementata in modo metodologicamente rigoroso. Il preprocessing elimina correttamente le fonti di leakage, l'imputazione è robusta, la standardizzazione precede la MI e la PCA, e lo scaling angolare è calibrato per la fisica della feature map.
+### Confronto delle metriche QSVM vs SVM classiche
 
-**Scenario difficile e realistico**: le due classi si sovrappongono nello spazio PCA, rendendo questo un problema genuinamente difficile. Questo è preferibile a configurazioni artificialmente separabili, perché permette una valutazione più onesta della generalizzazione.
+Viene generato un grafico a barre per **Accuracy**, **F1** e **ROC-AUC** (`benchmark_metrics_6q.png`).
+![benchmark_metrics_6q](./qsvm_baf_6qubit_pca5_mi/benchmark_metrics_6q.png)
 
-**Confronto con baseline**: la presenza di SVM Lineare e RBF come riferimento permette di contestualizzare le prestazioni della QSVM, evitando di presentare risultati assoluti privi di significato comparativo.
+### Matrici di confusione
 
-**Kernel quantistico manuale**: l'implementazione compute-uncompute è corretta e trasparente, con verifica della simmetria e della diagonale unitaria.
-
-### 9.2 Limiti e problemi identificati
-
-**Perdita di informazione troppo alta (27% di varianza spiegata)**: la compressione da 28 a 4 dimensioni tramite PCA è estrema. La maggior parte del segnale discriminativo viene sacrificata prima di entrare nel circuito quantistico. Questo è probabilmente il limite principale: la `ZZFeatureMap` lavora su input già molto degradati, il che rende difficile anche per un kernel non lineare ricavare strutture utili.
-
-**Mutual Information non integrata nella proiezione finale**: il grafico MI mostra chiaramente che `email_is_free` è la feature singola più informativa, con un punteggio di ~0.119. Tuttavia questa feature non viene preservata esplicitamente nella proiezione finale: entra nella PCA insieme a tutte le altre 27 feature, e il suo contributo viene diluito nelle componenti principali, che massimizzano varianza e non correlazione con il target.
-
-**Matrice kernel quasi-diagonale**: la heatmap mostra che il kernel quantistico produce similarità quasi nulle tra campioni diversi. Questo fenomeno, noto come **concentration of measure** o **kernel concentration**, si verifica quando la feature map è troppo espressiva e proietta punti vicini in stati quantistici quasi ortogonali, rendendo il kernel poco informativo. Con `reps=1` e `entanglement='full'` si è cercato di mitigare questo problema rispetto a `reps=2`, ma il risultato suggerisce che l'espressività rimane eccessiva rispetto alla struttura dei dati.
-
-**Dimensione del campione limitata**: 225 campioni di training (150 train + 75 test no, 225 train + 75 test) è un numero piccolo per un dataset di 1 milione di righe. Le stime delle metriche hanno un'elevata varianza statistica, e piccole variazioni nel campionamento possono cambiare significativamente i risultati. Le conclusioni sono quindi indicative e non definitive.
-
-**Decision boundary quantistica approssimata**: la visualizzazione della QSVM usa un kernel RBF classico per costruire la frontiera sulla griglia 2D. Questo introduce un'inconsistenza: ciò che viene visualizzato non è la vera superficie decisionale del modello quantistico.
-
-**Costo computazionale sproporzionato**: il calcolo manuale di ~25.000 coppie con 8.192 shots ciascuna richiede tempi dell'ordine di minuti–ore su CPU. Per le stesse 225 osservazioni, SVM RBF è addestrata in millisecondi con risultati superiori.
+Vengono create tre matrici di confusione affiancate (`confusion_matrices_6q.png`), una per ciascun modello.
+![confusion_matrices_6q](./qsvm_baf_6qubit_pca5_mi/confusion_matrices_6q.png)
+Questa visualizzazione permette di capire **come** ciascun modello commette errori (es. se tende a produrre molti falsi positivi o falsi negativi).
 
 ---
 
-## 10. Considerazioni sull'overfitting
+## 13. Blocco 11 – Salvataggio risultati e file di output
 
-Non emergono segnali forti di overfitting: le metriche sono basse sia per la QSVM sia, in misura minore, per le SVM classiche, il che indica che i modelli stanno apprendendo pattern generalmente poco strutturati e non memorizzando i dati di training. La SVM RBF ottiene un F1 di 0.693, che è consistente con un modello che generalizza parzialmente ma non perfettamente.
-
-Il rischio più concreto non è l'overfitting classico ma il **sottoadattamento** (underfitting) della QSVM, che non riesce a costruire un margine utile a causa della matrice di Gram quasi-diagonale. In pratica, la QSVM sta facendo scelte di classificazione quasi casuali, non perché abbia memorizzato il training set, ma perché il kernel non le fornisce informazione strutturata sufficiente.
+Al termine dell’esecuzione, lo script salva i file che documentano la parte algoritmica e sperimentale del progetto.
 
 ---
 
-## 11. Suggerimenti per migliorare i risultati
+## 14. Considerazioni metodologiche e interpretative
 
-1. **Ibrido PCA + MI**: usare 3 componenti PCA più la feature con MI massima (`email_is_free` o `has_other_cards`) come 4° input. Questo preserva una variabile altamente discriminativa in forma pura.
+### 14.1 Motivazioni della scelta PCA(5) + feature MI
 
-2. **Kernel concentration**: ridurre l'entanglement da `full` a `linear` può attenuare la dispersività del kernel. Alternativamente, ridurre la profondità del circuito non aiuta con `reps=1` ma si potrebbe esplorare una parametrizzazione manuale con angoli di fase ridotti.
+Rispetto a una semplice PCA a 4 dimensioni, la combinazione
 
-3. **Ottimizzare C**: il valore `C=1.0` non è ottimizzato. Una grid search sul parametro di regolarizzazione potrebbe migliorare il margine di classificazione.
+- **PCA(5)** (più varianza spiegata totale) e
+- **feature supervisionata top-MI** (dimensione fortemente correlata con il target)
 
-4. **Aumentare il campione**: anche passare da 150 a 300 campioni per classe (600 totali) aumenta il costo computazionale di circa 4×, ma potrebbe migliorare sensibilmente la stima del kernel e quindi le prestazioni.
+mira a ridurre la perdita di informazione discriminativa prima della codifica quantistica. I primi 5 qubit rappresentano una proiezione lineare non supervisionata, mentre il sesto qubit conserva una variabile esplicitamente significativa.[file:2]
 
-5. **Feature engineering**: costruire nuove feature composte (es. rapporti tra variabili, interazioni tra le top-MI feature) prima della PCA potrebbe aumentare la varianza spiegata e la qualità delle componenti.
+### 14.2 Aspetti critici del kernel quantistico
+
+Nonostante il disegno più ricco dello spazio di input, la matrice kernel quantistica può risultare comunque **concentrata** (valori elevati sulla diagonale e molto bassi fuori diagonale), fenomeno noto come **kernel concentration**. Ciò può rendere difficile per la QSVM costruire margini decisionali informativi.
+
+La scelta di `reps=1` e `entanglement="full"` è un compromesso tra espressività del circuito e rischio di concentrazione; ulteriori studi potrebbero esplorare pattern di entanglement diversi o circuiti meno espressivi.[file:2]
+
+### 14.3 Interpretazione del confronto con le SVM classiche
+
+La QSVM viene confrontata con:
+
+- una SVM lineare (margine lineare nello spazio a 6 dimensioni); 
+- una SVM RBF (kernel non lineare classico).
+
+In molti scenari il modello SVM RBF ottiene prestazioni competitive o superiori rispetto alla QSVM, a fronte di un costo computazionale significativamente inferiore. Questo risultato mette in luce che il **vantaggio quantistico non è garantito a priori** e deve essere verificato sperimentalmente caso per caso.[file:2]
 
 ---
 
-## 12. Conclusione
+## 15. Come utilizzare e modificare lo script
 
-La pipeline implementata è tecnoicamente corretta e funziona end-to-end dalla preparazione del dato fino alla classificazione e alla generazione del report. I risultati mostrano però un chiaro divario tra la QSVM (Accuracy 0.52, ROC-AUC 0.585) e i modelli classici, specialmente la SVM RBF (Accuracy 0.693, ROC-AUC 0.712).
+Per replicare e/o estendere gli esperimenti:
 
-Questo risultato non invalida il lavoro: dimostra invece che il vantaggio quantistico non emerge automaticamente dall'uso di una feature map quantistica, specialmente quando il preprocessing comprime fortemente l'informazione (27% di varianza spiegata) e il kernel risultante è scarsamente strutturato. Ai fini della tesi, questo risultato è scientificamente onesto e correttamente motivato: mostra la pipeline funzionante, identifica i colli di bottiglia e indica percorsi concreti di miglioramento.
+1. Posizionare `Base.csv` e `qsvm_baf_6qubit_pca5_mi1-1-2.py` nella stessa directory.
+2. Attivare l’ambiente virtuale con le dipendenze installate.
+3. Eseguire:
 
+   ```bash
+   python qsvm_baf_6qubit_pca5_mi1-1-2.py
+   ```
+
+4. Analizzare i file di output generati (CSV, PNG, NPY, TXT).
+
+Possibili estensioni includono:
+
+- Variare il numero di campioni per classe nel blocco di bilanciamento.
+- Modificare la struttura della `ZZFeatureMap` (pattern di entanglement, valore di `reps`).
+- Eseguire una ricerca di griglia sui parametri `C` e `gamma` delle SVM classiche.
+- Integrare altre feature ad alta MI come ulteriori qubit (compatibilmente con le risorse computazionali disponibili).
+
+In questo modo, lo script funge sia da **baseline sperimentale completa** sia da punto di partenza per ulteriori ricerche sul ruolo dei kernel quantistici in problemi reali di rilevazione frodi.
