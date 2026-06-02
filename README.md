@@ -140,6 +140,7 @@ X_angle = angle_scaler.fit_transform(X_bal)
 ```
 
 Dopo questa trasformazione, ogni dimensione del vettore è un angolo in radianti, pronto per essere fornito alla `ZZFeatureMap` a 6 qubit.
+
 ---
 
 ## 9. Blocco 7 – Train/Test split
