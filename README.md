@@ -169,6 +169,9 @@ feature_map = ZZFeatureMap(feature_dimension=N_QUBITS, reps=1, entanglement="ful
 - `reps = 1` per mantenere la profondità del circuito contenuta.
 - `entanglement = "full"` per permettere interazioni ZZ fra tutti i qubit, aumentando l’espressività del kernel.
 
+![zzfeaturemap_6q](./qsvm_baf_6qubit_pca5_mi/zzfeaturemap_6q.png)
+
+
 ### Backend quantistico
 
 Lo script utilizza `AerSimulator` con metodo `statevector` e tenta prima di usare la GPU (`device="GPU"`). Se questa non è disponibile, effettua automaticamente il fallback su CPU.
