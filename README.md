@@ -230,9 +230,9 @@ Per una comprensione più intuitiva dei risultati, lo script genera diversi graf
 Viene generato un grafico a barre per **Accuracy**, **F1** e **ROC-AUC** (`benchmark_metrics_6q.png`).
 ![benchmark_metrics_6q](./qsvm_baf_6qubit_pca5_mi/benchmark_metrics_6q.png)
 
-### Matrici di confusione
+### Confusion matrices
 
-Vengono create tre matrici di confusione affiancate (`confusion_matrices_6q.png`), una per ciascun modello.
+Vengono create tre confusion matrices affiancate (`confusion_matrices_6q.png`), una per ciascun modello.
 ![confusion_matrices_6q](./qsvm_baf_6qubit_pca5_mi/confusion_matrices_6q.png)
 Questa visualizzazione permette di capire **come** ciascun modello commette errori (es. se tende a produrre molti falsi positivi o falsi negativi).
 
@@ -246,51 +246,29 @@ Al termine dell’esecuzione, lo script salva i file che documentano la parte al
 
 ## 14. Considerazioni metodologiche e interpretative
 
-### 14.1 Motivazioni della scelta PCA(5) + feature MI
+### Motivazioni della scelta PCA(5) + feature MI
 
+Inizialmente abbiamo testato 4 componenti PCA, ma abbiamo visto che non era sufficiente per catturare abbastanza informazione, infatti l'accuracy era molto bassa. Allora abbiamo deciso di provare 5 componenti PCA + 1 feature supervisionata.
 Rispetto a una semplice PCA a 4 dimensioni, la combinazione
 
 - **PCA(5)** (più varianza spiegata totale) e
 - **feature supervisionata top-MI** (dimensione fortemente correlata con il target)
 
-mira a ridurre la perdita di informazione discriminativa prima della codifica quantistica. I primi 5 qubit rappresentano una proiezione lineare non supervisionata, mentre il sesto qubit conserva una variabile esplicitamente significativa.[file:2]
+mira a ridurre la perdita di informazione discriminativa prima della codifica quantistica. I primi 5 qubit rappresentano una proiezione lineare non supervisionata, mentre il sesto qubit conserva una variabile esplicitamente significativa.
 
-### 14.2 Aspetti critici del kernel quantistico
+Inoltre, abbiamo testato anche combinazioni di 7 qubit (6 componenti PCA + 1 feature MI) e 8 qubit (7 componenti PCA + 1 feature MI), ma i risultati non sono migliorati significativamente, anzi in alcuni casi sono peggiorati, quindi abbiamo deciso di mantenere 6 qubit.
 
-Nonostante il disegno più ricco dello spazio di input, la matrice kernel quantistica può risultare comunque **concentrata** (valori elevati sulla diagonale e molto bassi fuori diagonale), fenomeno noto come **kernel concentration**. Ciò può rendere difficile per la QSVM costruire margini decisionali informativi.
+### Aspetti critici del kernel quantistico
 
-La scelta di `reps=1` e `entanglement="full"` è un compromesso tra espressività del circuito e rischio di concentrazione; ulteriori studi potrebbero esplorare pattern di entanglement diversi o circuiti meno espressivi.[file:2]
+Anche se abbiamo arricchito i dati in ingresso, potremmo comunque imbatterci in un problema tecnico noto come **kernel concentration**. In pratica, il modello quantistico fa fatica a cogliere le vere differenze tra i dati, rendendo difficile la classificazione.
 
-### 14.3 Interpretazione del confronto con le SVM classiche
+Abbiamo scelto di usare le impostazioni `reps=1` e `entanglement="full"` proprio per trovare un buon compromesso: vogliamo un modello abbastanza complesso da poter imparare, ma non così tanto da rischiare di "bloccarsi" a causa di questo problema.
+
+### Interpretazione del confronto con le SVM classiche
 
 La QSVM viene confrontata con:
 
 - una SVM lineare (margine lineare nello spazio a 6 dimensioni); 
 - una SVM RBF (kernel non lineare classico).
 
-In molti scenari il modello SVM RBF ottiene prestazioni competitive o superiori rispetto alla QSVM, a fronte di un costo computazionale significativamente inferiore. Questo risultato mette in luce che il **vantaggio quantistico non è garantito a priori** e deve essere verificato sperimentalmente caso per caso.[file:2]
-
----
-
-## 15. Come utilizzare e modificare lo script
-
-Per replicare e/o estendere gli esperimenti:
-
-1. Posizionare `Base.csv` e `qsvm_baf_6qubit_pca5_mi1-1-2.py` nella stessa directory.
-2. Attivare l’ambiente virtuale con le dipendenze installate.
-3. Eseguire:
-
-   ```bash
-   python qsvm_baf_6qubit_pca5_mi1-1-2.py
-   ```
-
-4. Analizzare i file di output generati (CSV, PNG, NPY, TXT).
-
-Possibili estensioni includono:
-
-- Variare il numero di campioni per classe nel blocco di bilanciamento.
-- Modificare la struttura della `ZZFeatureMap` (pattern di entanglement, valore di `reps`).
-- Eseguire una ricerca di griglia sui parametri `C` e `gamma` delle SVM classiche.
-- Integrare altre feature ad alta MI come ulteriori qubit (compatibilmente con le risorse computazionali disponibili).
-
-In questo modo, lo script funge sia da **baseline sperimentale completa** sia da punto di partenza per ulteriori ricerche sul ruolo dei kernel quantistici in problemi reali di rilevazione frodi.
+In molti scenari il modello SVM RBF ottiene prestazioni competitive o superiori rispetto alla QSVM, a fronte di un costo computazionale significativamente inferiore. Questo risultato mette in luce che il **vantaggio quantistico non è garantito a priori** e deve essere verificato sperimentalmente caso per caso.
