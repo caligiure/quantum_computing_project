@@ -260,7 +260,36 @@ Rispetto a una semplice PCA a 4 dimensioni, la combinazione
 
 mira a ridurre la perdita di informazione discriminativa prima della codifica quantistica. I primi 5 qubit rappresentano una proiezione lineare non supervisionata, mentre il sesto qubit conserva una variabile esplicitamente significativa.
 
-Inoltre, abbiamo testato anche combinazioni di 7 qubit (6 componenti PCA + 1 feature MI) e 8 qubit (7 componenti PCA + 1 feature MI), ma i risultati non sono migliorati significativamente, anzi in alcuni casi sono peggiorati, quindi abbiamo deciso di mantenere 6 qubit.
+### Confronto dei risultati: 6 vs 7 vs 8 qubit
+
+Per esplorare l'impatto dell'aumento della dimensionalità (e quindi dei qubit), sono stati condotti tre esperimenti utilizzando 6, 7 e 8 qubit. In ogni esperimento l'architettura dei dati è stata mantenuta coerente: una singola feature supervisionata a massima Mutual Information, e le restanti dimensioni costituite dalle componenti principali (PCA).
+
+I risultati ottenuti dalle rispettive QSVM sui dataset di test (addestrati con parametri e bilanciamento analoghi) sono riassunti di seguito:
+
+| Metrica       | QSVM 6 Qubit (PCA5 + MI1) | QSVM 7 Qubit (PCA6 + MI1) | QSVM 8 Qubit (PCA7 + MI1) |
+|---------------|---------------------------|---------------------------|---------------------------|
+| **Accuracy**  | 0.627                     | 0.600                     | 0.573                     |
+| **Precision** | 0.600                     | 0.590                     | 0.558                     |
+| **Recall**    | 0.730                     | 0.622                     | 0.649                     |
+| **F1-Score**  | 0.659                     | 0.605                     | 0.600                     |
+| **ROC-AUC**   | 0.648                     | 0.364                     | 0.612                     |
+
+Contrariamente all'intuizione classica per cui aggiungere feature aumenta la capacità del modello, nei nostri test **l'aumento del numero di qubit ha portato a un progressivo peggioramento delle performance**. Il modello a 6 qubit rimane nettamente il migliore.
+
+#### Perché aumentare i qubit ha peggiorato i risultati?
+
+Questo fenomeno controintuitivo è ben noto nel Quantum Machine Learning e deriva dai seguenti motivi interconnessi:
+
+1. **Kernel Concentration (Exponential Concentration):**
+   L'utilizzo della `ZZFeatureMap` con entanglement "full" mappa i dati in uno spazio di Hilbert la cui dimensione cresce esponenzialmente ($2^N$). Aumentando il numero di qubit da 6 a 8, la distanza tra i vettori di stato nello spazio quantistico si massimizza. La conseguenza è che i prodotti interni (fidelity) tra stati differenti tendono tutti a zero, facendo collassare la matrice kernel verso la matrice identità. La QSVM perde così la sua capacità di generalizzare in quanto tutti i punti appaiono ortogonali ed equidistanti fra loro.
+
+2. **"Rumore" dalle componenti PCA aggiuntive:**
+   Le componenti PCA aggiunte nei modelli a 7 e 8 qubit (la 6ª e 7ª componente) catturano frazioni sempre minori di varianza utile rispetto alle prime. In una codifica non lineare altamente sensibile come quella quantistica (dove i valori diventano angoli di rotazione dei qubit), queste feature a bassa varianza introducono primariamente "rumore quantistico" che disturba la codifica delle feature principali, peggiorando la separazione delle classi.
+
+3. **Maledizione della Dimensionalità Quantistica (*Curse of Dimensionality*):**
+   Il volume dello spazio degli stati quantistici cresce così velocemente che, mantenendo invariata la quantità di dati di addestramento (300 campioni in totale per il training set), la densità dei punti nel modello a 8 qubit si dirada drasticamente. Questo spinge il modello a "memorizzare" il dataset di training (overfitting) e comporta un calo delle performance di generalizzazione sul set di test (come evidenziato dalla caduta dell'Accuracy).
+
+Per queste ragioni metodologiche, il modello a 6 qubit rappresenta per il nostro problema il miglior compromesso ("sweet spot") tra la ricchezza dell'informazione iniettata e la mitigazione degli effetti negativi legati all'alta dimensionalità.
 
 ### Aspetti critici del kernel quantistico
 
