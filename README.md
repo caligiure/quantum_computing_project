@@ -76,7 +76,45 @@ Nei paragrafi successivi ogni blocco viene descritto in dettaglio.
 
 ## 3. Blocco 1 – Caricamento del dataset
 
-Questo blocco è puramente descrittivo e serve a verificare che i dati siano stati caricati correttamente e che lo sbilanciamento fra classi sia in linea con le aspettative (circa 1–2% di frodi nella versione completa, prima del successivo bilanciamento su un sotto-campione).
+### Il dataset BAF (Bank Account Fraud) – NeurIPS 2022
+
+Il dataset utilizzato in questo progetto è il **Bank Account Fraud Dataset Suite (BAF)**, pubblicato come contributo alla conferenza NeurIPS 2022 e disponibile su [Kaggle](https://www.kaggle.com/datasets/sgpjesus/bank-account-fraud-dataset-neurips-2022) con licenza **CC BY-NC-SA 4.0**.
+
+Si tratta di un dataset **sintetico ma realistico**, generato a partire da dati reali di un istituto bancario tramite tecniche di sintesi controllata, con l'obiettivo di fornire un banco di prova standard per la valutazione di algoritmi di rilevazione delle frodi. La suite BAF è composta da un file base (`Base.csv`) e cinque varianti (`Variant I–V`), ciascuna arricchita con specifici tipi di data bias per testare la robustezza e l'equità (fairness) dei modelli. In questo progetto viene utilizzato esclusivamente il file **`Base.csv`**.
+
+#### Struttura e dimensioni
+
+| Caratteristica          | Valore                              |
+|-------------------------|-------------------------------------|
+| **Numero di istanze**   | 1.000.000                           |
+| **Numero di feature**   | 31 (+ 1 colonna target)             |
+| **Colonna target**      | `fraud_bool` (0 = legittimo, 1 = frode) |
+| **Tipo di dati**        | Misto: numerici continui, interi, categorici |
+| **Valori mancanti**     | Codificati come `-1` in alcune colonne |
+| **Licenza**             | CC BY-NC-SA 4.0                     |
+
+Le feature coprono diverse dimensioni comportamentali e demografiche del richiedente: reddito (`income`), età (`customer_age`), storico degli indirizzi (`prev_address_months_count`, `current_address_months_count`), velocità di richiesta (`velocity_6h`, `velocity_24h`, `velocity_4w`), punteggio di rischio interno (`credit_risk_score`), informazioni sul dispositivo (`device_os`, `device_distinct_emails_8w`), canale di accesso (`source`), e attributi protetti (gruppo d'età, stato occupazionale, percentuale di reddito) per consentire valutazioni di fairness.
+
+#### Lo sbilanciamento delle classi: il problema centrale
+
+La caratteristica più critica del dataset è il suo **fortissimo sbilanciamento tra le classi**:
+
+- **Classe 0 (legittimo):** ~988.900 istanze — circa **98.90%** del totale
+- **Classe 1 (frode):** ~11.100 istanze — circa **1.10%** del totale
+
+Questo rapporto di circa **1:90** tra frodi e richieste legittime rispecchia la distribuzione reale del fenomeno, ma pone una serie di sfide metodologiche significative per qualsiasi algoritmo di classificazione:
+
+1. **Bias verso la classe maggioritaria.** Un classificatore banale che predice sempre "legittimo" ottiene un'accuracy del ~98.90% senza apprendere nulla di utile. Metriche come l'*accuracy* diventano quindi del tutto fuorvianti come indicatori di performance reale.
+
+2. **Scarsità di esempi positivi per l'apprendimento.** Con soli ~11.100 esempi di frode su 1 milione, il modello dispone di pochissimi pattern fraudolenti da cui generalizzare. Questo è particolarmente problematico per algoritmi come le SVM, che dipendono dalla struttura geometrica dello spazio delle feature per definire il confine decisionale.
+
+3. **Metriche di valutazione inadeguate.** Per quantificare correttamente le performance in presenza di sbilanciamento è necessario ricorrere a metriche specifiche come **Precision**, **Recall**, **F1-score** e **ROC-AUC**, che tengono conto separatamente degli errori su ciascuna classe. In particolare, il **Recall sulla classe frode** è la metrica più critica in ambito applicativo: un falso negativo (frode non rilevata) ha conseguenze economiche molto più gravi di un falso positivo (richiesta legittima bloccata).
+
+4. **Necessità di bilanciamento artificiale.** Per consentire un addestramento efficace, è indispensabile intervenire sulla distribuzione delle classi. Nel nostro script questo viene realizzato nel **Blocco 5**, dove viene estratto un sotto-campione bilanciato di **150 esempi per classe** (300 totali), applicando oversampling con rimpiazzo sulla classe minoritaria se necessario. Questo approccio, pur riducendo la quantità complessiva di dati utilizzati, garantisce che il modello riceva un segnale di apprendimento equilibrato da entrambe le classi.
+
+5. **Rischio di overfitting sul campione bilanciato.** Lavorando su soli 300 campioni estratti da 1 milione, il modello potrebbe non catturare tutta l'eterogeneità del fenomeno fraudolento. Questo è un limite intrinseco dell'approccio adottato, giustificato dall'elevato costo computazionale del kernel quantistico, e deve essere tenuto presente nell'interpretazione dei risultati.
+
+Questo blocco è quindi puramente diagnostico: verifica che i dati siano stati caricati correttamente da `Base.csv` e stampa a console le distribuzioni delle classi, confermando che lo sbilanciamento osservato (~1.10% di frodi) sia in linea con le aspettative prima di procedere con il preprocessing e il bilanciamento artificiale.
 
 ---
 
