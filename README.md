@@ -291,6 +291,32 @@ Questo fenomeno controintuitivo è ben noto nel Quantum Machine Learning e deriv
 
 Per queste ragioni metodologiche, il modello a 6 qubit rappresenta per il nostro problema il miglior compromesso ("sweet spot") tra la ricchezza dell'informazione iniettata e la mitigazione degli effetti negativi legati all'alta dimensionalità.
 
+### Confronto dei risultati: ZZFeatureMap vs PauliFeatureMap (XYZZ) a 6 qubit
+
+Per valutare l'impatto del tipo di codifica quantistica, è stato effettuato un test mantenendo fisso il numero di qubit a 6 (PCA5 + MI1) e sostituendo la `ZZFeatureMap` standard con una più complessa `PauliFeatureMap` basata sugli operatori di Pauli X, Y e ZZ.
+
+I risultati ottenuti dalle due diverse feature map sul medesimo set di test sono i seguenti:
+
+| Metrica       | ZZFeatureMap (6 Qubit)    | PauliFeatureMap (X, Y, ZZ - 6 Qubit) |
+|---------------|---------------------------|--------------------------------------|
+| **Accuracy**  | 0.627                     | 0.560                                |
+| **Precision** | 0.600                     | 0.563                                |
+| **Recall**    | 0.730                     | 0.486                                |
+| **F1-Score**  | 0.659                     | 0.522                                |
+| **ROC-AUC**   | 0.648                     | 0.520                                |
+
+Il passaggio alla `PauliFeatureMap` ha causato un **netto deterioramento delle prestazioni**, riducendo la capacità predittiva del modello quasi a livello di una scelta casuale (ROC-AUC ~0.52 contro 0.648).
+
+#### Perché la PauliFeatureMap ha peggiorato i risultati?
+
+Questo crollo di performance è strettamente legato alle dinamiche interne dei circuiti quantistici variazionali:
+
+1. **Eccessiva Espressività (Over-parameterization):**
+   Mentre la `ZZFeatureMap` impiega principalmente layer di Hadamard seguiti da entanglement ZZ, l'inclusione sistematica di rotazioni X e Y nella `PauliFeatureMap` rende il circuito estremamente più espressivo. Nel Quantum Machine Learning, una feature map troppo espressiva tende a comportarsi come un'operazione pseudo-casuale, spalmando uniformemente i dati in tutto l'immenso spazio di Hilbert. Ne consegue che ogni coppia di dati viene mappata su stati quasi perfettamente ortogonali: la matrice kernel collassa quindi su una matrice identità (esasperando la *Kernel Concentration*) annullando la capacità dell'algoritmo di misurare la vera somiglianza ("fidelity") tra i campioni.
+
+2. **Disallineamento con la struttura dei dati (Feature Mapping Mismatch):**
+   Per i dati tabulari standardizzati del dataset BAF, l'interferenza generata dalla `ZZFeatureMap` riesce a cogliere e codificare in modo più robusto le differenze significative. L'aggiunta di rotazioni lungo gli assi X e Y, senza una specifica motivazione legata al dominio del problema, altera pesantemente le fasi dei qubit agendo come vero e proprio "rumore quantistico", che scompone irrimediabilmente i pattern originari faticosamente appresi dal modello.
+
 ### Aspetti critici del kernel quantistico
 
 Anche se abbiamo arricchito i dati in ingresso, potremmo comunque imbatterci in un problema tecnico noto come **kernel concentration**. In pratica, il modello quantistico fa fatica a cogliere le vere differenze tra i dati, rendendo difficile la classificazione.
