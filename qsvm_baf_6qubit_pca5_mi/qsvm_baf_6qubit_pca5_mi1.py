@@ -300,7 +300,8 @@ except Exception:
     backend_target = "CPU"
 print(f"[BACKEND] AerSimulator in uso: {backend_target}")
 
-N_SHOTS = 8192  # shots per stima della fidelity
+# N_SHOTS = 8192  # shots per stima della fidelity
+N_SHOTS = 16384  # shots per stima della fidelity
 print(f"[CONFIG] Shots per coppia: {N_SHOTS}")
 
 
