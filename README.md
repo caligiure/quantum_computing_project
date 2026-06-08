@@ -355,6 +355,52 @@ Questo crollo di performance è strettamente legato alle dinamiche interne dei c
 2. **Disallineamento con la struttura dei dati (Feature Mapping Mismatch):**
    Per i dati tabulari standardizzati del dataset BAF, l'interferenza generata dalla `ZZFeatureMap` riesce a cogliere e codificare in modo più robusto le differenze significative. L'aggiunta di rotazioni lungo gli assi X e Y, senza una specifica motivazione legata al dominio del problema, altera pesantemente le fasi dei qubit agendo come vero e proprio "rumore quantistico", che scompone irrimediabilmente i pattern originari faticosamente appresi dal modello.
 
+### Confronto dei risultati: ZZFeatureMap (fidelity globale) vs Projected Quantum Kernel (PQK)
+
+Per valutare un approccio alternativo alla costruzione del kernel quantistico, è stato implementato un **Projected Quantum Kernel (PQK)** che, pur utilizzando la stessa `ZZFeatureMap` a 6 qubit (PCA5 + MI1) come encoder, sostituisce il formalismo compute–uncompute con una misura di **expectation values locali** \(\langle Z_i \rangle\) per ogni qubit.
+
+#### Come funziona il PQK
+
+Mentre il kernel di fidelity globale calcola \(K(x_i, x_j) = |\langle 0|U^\dagger(x_j)U(x_i)|0\rangle|^2\) tramite un circuito doppio (compute–uncompute), il PQK:
+
+1. **Proietta** ogni campione \(x\) in un vettore classico di dimensione \(n\) (numero di qubit), misurando \(\langle Z_i \rangle = P(0_i) - P(1_i)\) dopo l'encoding con la `ZZFeatureMap`.
+2. **Costruisce** un kernel RBF classico su queste proiezioni: \(K_{\text{PQK}}(x_i, x_j) = \exp(-\gamma \|\text{proj}(x_i) - \text{proj}(x_j)\|^2)\).
+3. **Riduce** il costo computazionale da \(O(n^2)\) a \(O(n)\) circuiti quantistici.
+
+#### Risultati a confronto
+
+I risultati ottenuti dai due approcci sullo stesso dataset di test (6 qubit, PCA5 + MI1, 300 campioni bilanciati) sono i seguenti:
+
+| Metrica       | QSVM ZZFeatureMap (fidelity globale) | QSVM PQK (expectation values + RBF) |
+|---------------|--------------------------------------|--------------------------------------|
+| **Accuracy**  | 0.627                                | 0.493                                |
+| **Precision** | 0.600                                | 0.493                                |
+| **Recall**    | 0.730                                | **1.000**                            |
+| **F1-Score**  | 0.659                                | 0.661                                |
+| **ROC-AUC**   | **0.648**                            | 0.431                                |
+
+Il PQK mostra un comportamento anomalo: **Recall = 1.0** significa che predice **tutti i campioni come frode**, classificando erroneamente anche tutti i legittimi. Questo è confermato da Accuracy = Precision ≈ 0.493 (cioè circa il 49.3% del test set è della classe frode) e da un ROC-AUC = 0.431, inferiore alla soglia di casualità pura (0.5), che indica che il modello è peggio di un classificatore casuale.
+
+#### Perché il PQK ha fallito in questo contesto?
+
+Questo risultato, apparentemente paradossale (un approccio teoricamente più robusto che performa peggio), si spiega con una serie di ragioni strutturali interconnesse:
+
+1. **Collasso in proiezioni uniformi (spectral flatness delle proiezioni):**
+   Il PQK proietta ogni campione in un vettore di expectation values \(\langle Z_i \rangle \in [-1, +1]^6\). Tuttavia, con una `ZZFeatureMap` con `entanglement="full"` e `reps=1`, il circuito crea uno stato quantistico altamente entangled. In tale regime, i valori marginali \(\langle Z_i \rangle\) per ogni singolo qubit tendono ad essere vicini a zero per qualsiasi input (poiché lo stato globale è quasi massimalmente entangled), rendendo le proiezioni quasi identiche tra campioni diversi. Il kernel RBF costruito su queste proiezioni uniformi assume valori simili per tutte le coppie, perdendo qualsiasi potere discriminativo.
+
+2. **Perdita di informazione dalla misura locale vs globale:**
+   Il kernel di fidelity globale sfrutta l'intera struttura dello stato quantistico \(|\psi(x)\rangle\), incluse tutte le correlazioni tra i qubit. Il PQK, invece, riduce questa informazione multidimensionale a soli 6 scalari (uno per qubit), ignorando tutte le correlazioni croisate tra qubit che la `ZZFeatureMap` ha costruito tramite i gate ZZ. Proprio quelle correlazioni tra qubit sono la firma informativa principale di questa feature map: misurare solo le statistiche marginali equivale a scartare la parte più informativa della rappresentazione quantistica.
+
+3. **Sensibilità al valore di \(\gamma\) del kernel RBF:**
+   Il PQK introduce un iperparametro aggiuntivo: il valore di \(\gamma\) del kernel RBF classico applicato alle proiezioni. Il valore di default usato nello script è \(\gamma = 1.0\), ma questo valore è in generale dipendente dalla distribuzione delle proiezioni quantistiche. Se le proiezioni sono concentrate in una regione ristretta dello spazio (come avviene nel caso del collasso descritto al punto 1), un \(\gamma\) non ottimizzato produce un kernel eccessivamente piatto o eccessivamente appuntito, entrambi scenari che portano a una SVM incapace di separare le classi. Un'ottimizzazione via cross-validation di \(\gamma\) è necessaria, ma computazionalmente costosa.
+
+4. **Il vantaggio teorico del PQK non si applica a questo regime:**
+   Il PQK è stato teorizzato per aggirare il problema del *kernel concentration* (collasso della matrice di fidelity verso l'identità) tipico dei kernel quantistici su molti qubit. Tuttavia, con soli 6 qubit e `reps=1`, il kernel di fidelity globale **non** soffre ancora significativamente di questo problema (come dimostrato dal ROC-AUC = 0.648 della ZZFeatureMap). In questo regime a bassa dimensionalità, il kernel di fidelity riesce ancora a catturare differenze significative tra i campioni, mentre il PQK — pensato per circuiti più profondi e con più qubit — introduce una perdita di informazione non compensata da alcun beneficio.
+
+In sintesi, il PQK è uno strumento valido per circuiti quantistici profondi e ad alto numero di qubit, dove il kernel di fidelity collassa. A 6 qubit con `reps=1`, il formalismo compute–uncompute della `ZZFeatureMap` preserva meglio la struttura informativa dei dati, risultando nettamente superiore.
+
+---
+
 ### Aspetti critici del kernel quantistico
 
 Anche se abbiamo arricchito i dati in ingresso, potremmo comunque imbatterci in un problema tecnico noto come **kernel concentration**. In pratica, il modello quantistico fa fatica a cogliere le vere differenze tra i dati, rendendo difficile la classificazione.
